@@ -9,6 +9,8 @@ export default function PerfumeDetail() {
   const [imageLoaded, setImageLoaded] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
+  const [showFullDescription, setShowFullDescription] = useState(false)
+
 
   useEffect(() => {
     const fetchPerfume = async () => {
@@ -225,9 +227,22 @@ export default function PerfumeDetail() {
                     <span className="mr-2">🌸</span>
                     Descripción
                   </h3>
-                  <p className="text-gray-700 leading-relaxed text-lg">
-                    {perfume.descripcion}
+                  <p className="text-gray-700 leading-relaxed text-lg whitespace-pre-line">
+                    {showFullDescription
+                      ? perfume.descripcion
+                      : perfume.descripcion.slice(0, 180) + (perfume.descripcion.length > 180 ? "..." : "")}
                   </p>
+
+
+              {perfume.descripcion.length > 180 && (
+                <button
+                  onClick={() => setShowFullDescription(!showFullDescription)}
+                  className="mt-2 text-sm text-purple-600 font-semibold underline hover:text-purple-800 transition-colors"
+                >
+                  {showFullDescription ? "Ver menos" : "Ver más"}
+                </button>
+              )}
+
                 </div>
               )}
 
