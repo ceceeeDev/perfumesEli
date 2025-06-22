@@ -10,7 +10,7 @@ export default function AgregarPerfume() {
   const [imagenFile, setImagenFile] = useState(null);
   const [previewUrl, setPreviewUrl] = useState("");
   const [imagenOriginalUrl, setImagenOriginalUrl] = useState("");
-  const [stock, setStock] = useState(true);
+  const [estado, setEstado] = useState("disponible"); // Nuevo campo estado
   const [perfumes, setPerfumes] = useState([]);
   const [editandoId, setEditandoId] = useState(null);
 
@@ -35,7 +35,7 @@ export default function AgregarPerfume() {
     setImagenFile(null);
     setPreviewUrl("");
     setImagenOriginalUrl("");
-    setStock(true);
+    setEstado("disponible");
     setEditandoId(null);
   };
 
@@ -99,7 +99,9 @@ export default function AgregarPerfume() {
       precio: parseFloat(precio),
       descripcion,
       imagen_url: imagenUrl,
-      stock,
+      estado, // Usar el nuevo campo estado
+      // Mantener compatibilidad con stock por si acaso
+      //stock: estado === "disponible" Ya no usamos stock
     };
 
     let response;
@@ -128,42 +130,75 @@ export default function AgregarPerfume() {
     }
   };
 
-  const eliminarPerfume = async (id) => {
-    const perfume = perfumes.find((p) => p.id === id);
+const eliminarPerfume = async (id) => {
+  const perfume = perfumes.find((p) => p.id === id);
 
-    const confirmar = await Swal.fire({
-      title: "¿Estás seguro?",
-      text: "Esto eliminará el perfume permanentemente.",
-      icon: "warning",
-      showCancelButton: true,
-      confirmButtonText: "Sí, eliminar",
-      cancelButtonText: "Cancelar",
-    });
+  const confirmar = await Swal.fire({
+    title: "¿Estás seguro?",
+    text: "Esto eliminará el perfume permanentemente.",
+    icon: "warning",
+    showCancelButton: true,
+    confirmButtonText: "Sí, eliminar",
+    cancelButtonText: "Cancelar",
+  });
 
-    if (confirmar.isConfirmed) {
-      if (perfume.imagen_url) {
-        const path = decodeURIComponent(
-          perfume.imagen_url.split("/").slice(-2).join("/")
-        );
-        await supabase.storage.from("imagenes-perfumes").remove([path]);
-      }
+  if (confirmar.isConfirmed) {
+    // Eliminar imagen del storage si existe
+    if (perfume.imagen_url) {
+      try {
+        // Extraer la ruta completa del archivo desde la URL
+        // La URL típica es: https://[project].supabase.co/storage/v1/object/public/imagenes-perfumes/perfumes/filename.webp
+        const urlParts = perfume.imagen_url.split('/');
+        const bucketIndex = urlParts.findIndex(part => part === 'imagenes-perfumes');
+        
+        if (bucketIndex !== -1 && bucketIndex < urlParts.length - 1) {
+          // Construir la ruta del archivo: perfumes/filename.webp
+          const filePath = urlParts.slice(bucketIndex + 1).join('/');
+          
+          console.log('Intentando eliminar archivo:', filePath); // Para debug
+          
+          const { error: storageError } = await supabase
+            .storage
+            .from("imagenes-perfumes")
+            .remove([filePath]);
 
-      const { error } = await supabase.from("perfumes").delete().eq("id", id);
-      if (error) {
-        Swal.fire("Error", "No se pudo eliminar.", "error");
-      } else {
-        obtenerPerfumes();
-        Swal.fire("Eliminado", "El perfume fue eliminado.", "success");
+          if (storageError) {
+            console.error("Error al eliminar la imagen:", storageError.message);
+            // Opcional: mostrar advertencia pero continuar eliminando el registro
+            Swal.fire({
+              icon: "warning",
+              title: "Advertencia",
+              text: "El perfume se eliminará pero hubo un problema al eliminar la imagen del storage.",
+              showConfirmButton: true,
+              timer: 3000
+            });
+          }
+        } else {
+          console.error("No se pudo determinar la ruta del archivo desde la URL:", perfume.imagen_url);
+        }
+      } catch (error) {
+        console.error("Error procesando la URL de la imagen:", error);
       }
     }
-  };
+
+    // Eliminar registro de la base de datos
+    const { error } = await supabase.from("perfumes").delete().eq("id", id);
+    if (error) {
+      Swal.fire("Error", "No se pudo eliminar el perfume.", "error");
+    } else {
+      obtenerPerfumes();
+      Swal.fire("Eliminado", "El perfume fue eliminado correctamente.", "success");
+    }
+  }
+};
 
   const cargarParaEditar = (perfume) => {
     setNombre(perfume.nombre);
     setMarca(perfume.marca);
     setPrecio(perfume.precio);
     setDescripcion(perfume.descripcion);
-    setStock(perfume.stock);
+    // Manejar compatibilidad con el campo stock anterior
+    setEstado(perfume.estado || "agotado");
     setPreviewUrl(perfume.imagen_url || "");
     setImagenOriginalUrl(perfume.imagen_url || "");
     setImagenFile(null);
@@ -197,6 +232,21 @@ export default function AgregarPerfume() {
 
       setImagenFile(file);
       setPreviewUrl(URL.createObjectURL(file));
+    }
+  };
+
+  const getEstadoInfo = (estadoPerfume) => {
+    const estadoActual = estadoPerfume || "agotado";
+    
+    switch (estadoActual) {
+      case "disponible":
+        return { emoji: "✅", texto: "Disponible", color: "bg-green-100 text-green-700" };
+      case "agotado":
+        return { emoji: "❌", texto: "Agotado", color: "bg-red-100 text-red-700" };
+      case "proximamente":
+        return { emoji: "⏳", texto: "Próximamente", color: "bg-gray-100 text-black" };
+      default:
+        return { emoji: "✅", texto: "Disponible", color: "bg-green-100 text-green-700" };
     }
   };
 
@@ -337,33 +387,91 @@ export default function AgregarPerfume() {
                 )}
               </div>
 
-              {/* Stock */}
-              <div className="bg-gradient-to-r from-green-50 to-emerald-50 p-3 sm:p-4 rounded-lg sm:rounded-xl border border-green-200">
-                <label className="flex items-center space-x-3 cursor-pointer">
-                  <div className="relative flex-shrink-0">
+              {/* Estado del perfume - NUEVO */}
+              <div className="bg-gradient-to-r from-purple-50 to-pink-50 p-4 sm:p-5 rounded-lg sm:rounded-xl border border-purple-200">
+                <label className="block text-xs sm:text-sm font-bold text-gray-700 mb-3">
+                  🏷️ Estado del Perfume
+                </label>
+                
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  {/* Disponible */}
+                  <label className="relative cursor-pointer">
                     <input
-                      type="checkbox"
-                      checked={stock}
-                      onChange={() => setStock(!stock)}
+                      type="radio"
+                      name="estado"
+                      value="disponible"
+                      checked={estado === "disponible"}
+                      onChange={(e) => setEstado(e.target.value)}
                       className="sr-only"
                     />
-                    <div className={`w-10 sm:w-12 h-5 sm:h-6 rounded-full transition-all duration-300 ${
-                      stock ? 'bg-green-500' : 'bg-gray-300'
+                    <div className={`p-3 rounded-lg border-2 transition-all duration-300 text-center ${
+                      estado === "disponible" 
+                        ? 'border-green-400 bg-green-50 shadow-lg transform scale-105' 
+                        : 'border-gray-200 bg-white hover:border-green-300'
                     }`}>
-                      <div className={`w-4 sm:w-5 h-4 sm:h-5 bg-white rounded-full shadow-md transform transition-transform duration-300 ${
-                        stock ? 'translate-x-5 sm:translate-x-6' : 'translate-x-0.5'
-                      } mt-0.5`}></div>
+                      <div className="text-2xl mb-1">✅</div>
+                      <div className="text-sm font-bold text-green-700">Disponible</div>
+                      <div className="text-xs text-gray-600">Listo para venta</div>
                     </div>
-                  </div>
-                  <div className="min-w-0">
-                    <span className="text-sm sm:text-lg font-bold text-gray-800 block">
-                      {stock ? "✅ Disponible en stock" : "❌ Sin stock"}
+                  </label>
+
+                  {/* Agotado */}
+                  <label className="relative cursor-pointer">
+                    <input
+                      type="radio"
+                      name="estado"
+                      value="agotado"
+                      checked={estado === "agotado"}
+                      onChange={(e) => setEstado(e.target.value)}
+                      className="sr-only"
+                    />
+                    <div className={`p-3 rounded-lg border-2 transition-all duration-300 text-center ${
+                      estado === "agotado" 
+                        ? 'border-red-400 bg-red-50 shadow-lg transform scale-105' 
+                        : 'border-gray-200 bg-white hover:border-red-300'
+                    }`}>
+                      <div className="text-2xl mb-1">❌</div>
+                      <div className="text-sm font-bold text-red-700">Agotado</div>
+                      <div className="text-xs text-gray-600">Sin stock</div>
+                    </div>
+                  </label>
+
+                  {/* Próximamente */}
+                  <label className="relative cursor-pointer">
+                    <input
+                      type="radio"
+                      name="estado"
+                      value="proximamente"
+                      checked={estado === "proximamente"}
+                      onChange={(e) => setEstado(e.target.value)}
+                      className="sr-only"
+                    />
+                    <div className={`p-3 rounded-lg border-2 transition-all duration-300 text-center ${
+                      estado === "proximamente" 
+                        ? 'border-gray-800 bg-gray-50 shadow-lg transform scale-105' 
+                        : 'border-gray-200 bg-white hover:border-gray-400'
+                    }`}>
+                      <div className="text-2xl mb-1">⏳</div>
+                      <div className="text-sm font-bold text-black">Próximamente</div>
+                      <div className="text-xs text-gray-600">Llegará pronto</div>
+                    </div>
+                  </label>
+                </div>
+
+                {/* Descripción del estado seleccionado */}
+                <div className="mt-4 p-3 bg-white/60 rounded-lg border border-white/50">
+                  <div className="flex items-center space-x-2">
+                    <span className="text-lg">{getEstadoInfo(estado).emoji}</span>
+                    <span className="text-sm font-semibold text-gray-700">
+                      Estado seleccionado: <span className="text-purple-600">{getEstadoInfo(estado).texto}</span>
                     </span>
-                    <p className="text-xs sm:text-sm text-gray-600">
-                      {stock ? "Los clientes pueden comprar este perfume" : "Producto agotado"}
-                    </p>
                   </div>
-                </label>
+                  <p className="text-xs text-gray-600 mt-1">
+                    {estado === "disponible" && "Los clientes pueden comprar este perfume inmediatamente"}
+                    {estado === "agotado" && "El perfume no está disponible para compra"}
+                    {estado === "proximamente" && "El perfume se mostrará con un mensaje especial de próximo lanzamiento"}
+                  </p>
+                </div>
               </div>
 
               {/* Botones */}
@@ -410,65 +518,64 @@ export default function AgregarPerfume() {
                   <p className="text-sm sm:text-base text-gray-500">Agrega tu primer perfume para comenzar</p>
                 </div>
               ) : (
-                perfumes.map((perfume) => (
-                  <div 
-                    key={perfume.id} 
-                    className="bg-gradient-to-r from-white to-gray-50 p-3 sm:p-4 rounded-xl sm:rounded-2xl border border-gray-200 hover:shadow-md transition-all duration-300 group"
-                  >
-                    <div className="flex items-center space-x-3 sm:space-x-4">
-                      {/* Imagen pequeña */}
-                      <div className="w-12 h-12 sm:w-16 sm:h-16 rounded-lg sm:rounded-xl overflow-hidden bg-gray-100 flex-shrink-0">
-                        {perfume.imagen_url ? (
-                          <img 
-                            src={perfume.imagen_url} 
-                            alt={perfume.nombre}
-                            className="w-full h-full object-cover"
-                          />
-                        ) : (
-                          <div className="w-full h-full flex items-center justify-center text-gray-400 text-lg sm:text-2xl">
-                            🌸
-                          </div>
-                        )}
-                      </div>
+                perfumes.map((perfume) => {
+                  const estadoInfo = getEstadoInfo(perfume.estado || "agotado");
+                  return (
+                    <div 
+                      key={perfume.id} 
+                      className="bg-gradient-to-r from-white to-gray-50 p-3 sm:p-4 rounded-xl sm:rounded-2xl border border-gray-200 hover:shadow-md transition-all duration-300 group"
+                    >
+                      <div className="flex items-center space-x-3 sm:space-x-4">
+                        {/* Imagen pequeña */}
+                        <div className="w-12 h-12 sm:w-16 sm:h-16 rounded-lg sm:rounded-xl overflow-hidden bg-gray-100 flex-shrink-0">
+                          {perfume.imagen_url ? (
+                            <img 
+                              src={perfume.imagen_url} 
+                              alt={perfume.nombre}
+                              className="w-full h-full object-cover"
+                            />
+                          ) : (
+                            <div className="w-full h-full flex items-center justify-center text-gray-400 text-lg sm:text-2xl">
+                              🌸
+                            </div>
+                          )}
+                        </div>
 
-                      {/* Info del perfume */}
-                      <div className="flex-1 min-w-0">
-                        <h3 className="font-bold text-gray-900 truncate text-sm sm:text-base">{perfume.nombre}</h3>
-                        <p className="text-xs sm:text-sm text-gray-600 truncate">{perfume.marca}</p>
-                        <div className="flex items-center space-x-2 sm:space-x-3 mt-1">
-                          <span className="text-sm sm:text-lg font-bold text-green-600">
-                            ${parseFloat(perfume.precio).toFixed(2)}
-                          </span>
-                          <span className={`px-1.5 sm:px-2 py-0.5 sm:py-1 rounded-full text-xs font-semibold ${
-                            perfume.stock 
-                              ? 'bg-green-100 text-green-700' 
-                              : 'bg-red-100 text-red-700'
-                          }`}>
-                            {perfume.stock ? '✅ Stock' : '❌ Agotado'}
-                          </span>
+                        {/* Info del perfume */}
+                        <div className="flex-1 min-w-0">
+                          <h3 className="font-bold text-gray-900 truncate text-sm sm:text-base">{perfume.nombre}</h3>
+                          <p className="text-xs sm:text-sm text-gray-600 truncate">{perfume.marca}</p>
+                          <div className="flex items-center space-x-2 sm:space-x-3 mt-1">
+                            <span className="text-sm sm:text-lg font-bold text-green-600">
+                              ${parseFloat(perfume.precio).toFixed(2)}
+                            </span>
+                            <span className={`px-1.5 sm:px-2 py-0.5 sm:py-1 rounded-full text-xs font-semibold ${estadoInfo.color}`}>
+                              {estadoInfo.emoji} {estadoInfo.texto}
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Botones de acción */}
+                        <div className="flex flex-col sm:flex-row space-y-1 sm:space-y-0 sm:space-x-2 flex-shrink-0">
+                          <button
+                            onClick={() => cargarParaEditar(perfume)}
+                            className="p-1.5 sm:p-2 bg-blue-500 text-white rounded-md sm:rounded-lg hover:bg-blue-600 transition-colors text-xs sm:text-sm font-semibold min-w-0"
+                            title="Editar"
+                          >
+                            ✏️
+                          </button>
+                          <button
+                            onClick={() => eliminarPerfume(perfume.id)}
+                            className="p-1.5 sm:p-2 bg-red-500 text-white rounded-md sm:rounded-lg hover:bg-red-600 transition-colors text-xs sm:text-sm font-semibold min-w-0"
+                            title="Eliminar"
+                          >
+                            🗑️
+                          </button>
                         </div>
                       </div>
-
-                      {/* Botones de acción */}
-                      <div className="flex flex-col sm:flex-row space-y-1 sm:space-y-0 sm:space-x-2 flex-shrink-0">
-                        <button
-                          onClick={() => cargarParaEditar(perfume)}
-                          className="p-1.5 sm:p-2 bg-blue-500 text-white rounded-md sm:rounded-lg hover:bg-blue-600 transition-colors text-xs sm:text-sm font-semibold min-w-0"
-                          title="Editar"
-                        >
-                          ✏️
-                        </button>
-                        <button
-                          onClick={() => eliminarPerfume(perfume.id)}
-                          className="p-1.5 sm:p-2 bg-red-500 text-white rounded-md sm:rounded-lg hover:bg-red-600 transition-colors text-xs sm:text-sm font-semibold min-w-0"
-                          title="Eliminar"
-                        >
-                          🗑️
-                        </button>
-                      </div>
                     </div>
-                  </div>
-                ))
+                  );
+                })
               )}
             </div>
           </div>
