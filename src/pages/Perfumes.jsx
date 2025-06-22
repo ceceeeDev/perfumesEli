@@ -9,13 +9,21 @@ export default function Perfumes() {
     const fetchPerfumes = async () => {
       const { data, error } = await supabase
         .from("perfumes")
-        .select("*")
-        .order("nombre", { ascending: true })
+        .select("*");
 
       if (error) {
-        console.error("Error al obtener perfumes:", error)
+        console.error("Error al obtener perfumes:", error);
       } else {
-        setPerfumes(data)
+        // Ordenar: disponibles primero, luego agotados, y dentro de cada grupo por precio ascendente
+        const ordenados = data
+          .slice()
+          .sort((a, b) => {
+            if (!a.stock && b.stock) return 1;
+            if (a.stock && !b.stock) return -1;
+            return a.precio - b.precio;
+          });
+
+        setPerfumes(ordenados);
       }
     }
 
